@@ -18,20 +18,29 @@ def get_client() -> Groq:
     return Groq(api_key=api_key)
 
 
-def build_messages(message: str, history: list[dict]) -> list[dict]:
+def build_messages(message: str, history: list) -> list[dict]:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     for item in history:
-        role = item.get("role")
-        content = item.get("content")
-        if role in {"user", "assistant"} and content:
-            messages.append({"role": role, "content": content})
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+            if role in {"user", "assistant"} and content:
+                messages.append({"role": role, "content": content})
+            continue
+
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            user_text, assistant_text = item
+            if user_text:
+                messages.append({"role": "user", "content": user_text})
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
 
     messages.append({"role": "user", "content": message})
     return messages
 
 
-def chat(message: str, history: list[dict]) -> str:
+def chat(message: str, history: list) -> str:
     model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     client = get_client()
     messages = build_messages(message, history)
@@ -54,7 +63,6 @@ with gr.Blocks(title="Simple Groq Chatbot") as demo:
 
     gr.ChatInterface(
         fn=chat,
-        type="messages",
         textbox=gr.Textbox(
             placeholder="Tulis pertanyaan di sini...",
             container=False,
