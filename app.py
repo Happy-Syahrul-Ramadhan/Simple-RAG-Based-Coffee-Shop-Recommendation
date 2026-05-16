@@ -112,18 +112,29 @@ def build_rag_prompt(
         occupancy = doc.metadata.get("requested_occupancy")
         occupancy_label = doc.metadata.get("requested_occupancy_label")
         distance_km = doc.metadata.get("distance_km")
+        current_day = doc.metadata.get("current_popularity_day")
+        current_hour = doc.metadata.get("current_popularity_hour")
+        current_occupancy = doc.metadata.get("current_popularity_occupancy")
+        current_label = doc.metadata.get("current_popularity_label")
         occupancy_text = "tidak tersedia"
         distance_text = "tidak tersedia"
+        current_popularity_text = "tidak tersedia"
         if requested_hour is not None and occupancy is not None:
             occupancy_text = f"{requested_hour:02d}.00 -> {occupancy_label} ({occupancy:.1f}%)"
         if distance_km is not None:
             distance_text = f"{distance_km:.2f} km"
+        if current_day and current_hour is not None and current_occupancy is not None:
+            current_popularity_text = (
+                f"{current_day} pukul {current_hour:02d}.00 -> "
+                f"{current_label} ({current_occupancy:.1f}%)"
+            )
         header = (
             f"[{idx}] {title} | kota: {result_city} | "
             f"rating: {score if score is not None else 'N/A'} | "
             f"reviews: {reviews_count if reviews_count is not None else 'N/A'} | "
             f"buka sekarang: {open_label} | "
             f"keramaian_jam_diminta: {occupancy_text} | "
+            f"keramaian_saat_ini: {current_popularity_text} | "
             f"jarak_dari_pengguna: {distance_text}"
         )
         context_sections.append(f"{header}\n{doc.text}")
@@ -220,6 +231,10 @@ def render_sources(retrieved_docs: list) -> str:
         requested_occupancy = meta.get("requested_occupancy")
         requested_label = html.escape(meta.get("requested_occupancy_label") or "Tidak tersedia")
         distance_km = meta.get("distance_km")
+        current_day = html.escape(meta.get("current_popularity_day") or "")
+        current_hour = meta.get("current_popularity_hour")
+        current_occupancy = meta.get("current_popularity_occupancy")
+        current_label = html.escape(meta.get("current_popularity_label") or "Tidak tersedia")
 
         lines = [
             f"<div style='padding:12px; margin-bottom:12px; border:1px solid #d7d7d7; border-radius:10px;'>",
@@ -230,8 +245,15 @@ def render_sources(retrieved_docs: list) -> str:
             f"<div>Alamat: {address}</div>",
             f"<div>Jam buka: {opening_hours}</div>",
             f"<div>Telepon: {phone}</div>",
-            f"<div>Popular times: {busy}</div>",
+            f"<div>Popular times live text: {busy}</div>",
         ]
+        if current_day and current_hour is not None and current_occupancy is not None:
+            lines.append(
+                f"<div>Popular times saat ini: {current_day} pukul {current_hour:02d}.00 -> "
+                f"{current_label} ({current_occupancy:.1f}%)</div>"
+            )
+        else:
+            lines.append("<div>Popular times saat ini: Tidak tersedia</div>")
         if distance_km is not None:
             lines.append(f"<div>Jarak dari lokasi Anda: {distance_km:.2f} km</div>")
         if requested_hour is not None:

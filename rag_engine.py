@@ -55,6 +55,7 @@ TIME_OF_DAY_HINTS = {
     "sore": 16,
     "malam": 20,
 }
+DEFAULT_TIMEZONE = "Asia/Jakarta"
 
 
 @dataclass
@@ -217,6 +218,26 @@ def describe_occupancy(value: float | None) -> str:
     if value <= 80:
         return "Ramai"
     return "Sangat ramai"
+
+
+def get_current_day_hour(tz_name: str = DEFAULT_TIMEZONE) -> tuple[str, int]:
+    now = datetime.now(ZoneInfo(tz_name))
+    return DAY_ORDER[now.weekday()], now.hour
+
+
+def get_current_popularity_snapshot(
+    histogram: dict | None,
+    tz_name: str = DEFAULT_TIMEZONE,
+) -> dict:
+    day_code, hour = get_current_day_hour(tz_name)
+    occupancy = get_occupancy_percent(histogram, hour, day_code)
+    return {
+        "day_code": day_code,
+        "hour": hour,
+        "occupancy": occupancy,
+        "label": describe_occupancy(occupancy),
+        "day_label": DAY_LABELS.get(day_code, day_code),
+    }
 
 
 def format_status(item: dict) -> str:
@@ -439,6 +460,14 @@ class CoffeeRAG:
             metadata["requested_day"] = requested_day
             metadata["requested_occupancy"] = occupancy
             metadata["requested_occupancy_label"] = describe_occupancy(occupancy)
+            current_popularity = get_current_popularity_snapshot(
+                metadata.get("popular_histogram_raw")
+            )
+            metadata["current_popularity_day"] = current_popularity["day_label"]
+            metadata["current_popularity_day_code"] = current_popularity["day_code"]
+            metadata["current_popularity_hour"] = current_popularity["hour"]
+            metadata["current_popularity_occupancy"] = current_popularity["occupancy"]
+            metadata["current_popularity_label"] = current_popularity["label"]
             distance_km = haversine_distance_km(
                 user_lat,
                 user_lng,
