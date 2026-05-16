@@ -281,6 +281,93 @@ def clear_chat():
     return [], [], "", "<p>Source results akan muncul di sini setelah Anda bertanya.</p>"
 
 
+LOCATION_WIDGET_HTML = """
+<div style="padding:12px; border:1px solid #d7d7d7; border-radius:10px; margin-top:8px;">
+  <div style="font-weight:600; margin-bottom:8px;">Lokasi Otomatis</div>
+  <button id="geo-locate-btn" type="button" style="padding:8px 12px; border:none; border-radius:8px; cursor:pointer;">
+    Gunakan lokasi saya
+  </button>
+  <div id="geo-status" style="margin-top:8px; font-size:14px;">
+    Klik tombol untuk meminta akses lokasi dari browser.
+  </div>
+</div>
+<script>
+(() => {
+  const LAT_KEY = "coffee_rag_user_lat";
+  const LNG_KEY = "coffee_rag_user_lng";
+
+  const setStatus = (text) => {
+    const status = document.getElementById("geo-status");
+    if (status) status.textContent = text;
+  };
+
+  const setTextboxValue = (elemId, value) => {
+    const root = document.getElementById(elemId);
+    if (!root) return false;
+    const input = root.querySelector("input, textarea");
+    if (!input) return false;
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
+      || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+    if (nativeSetter) {
+      nativeSetter.call(input, value);
+    } else {
+      input.value = value;
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  };
+
+  const saveLocation = (lat, lng) => {
+    localStorage.setItem(LAT_KEY, String(lat));
+    localStorage.setItem(LNG_KEY, String(lng));
+    setTextboxValue("user-lat-input", String(lat));
+    setTextboxValue("user-lng-input", String(lng));
+    setStatus(`Lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`);
+  };
+
+  const restoreLocation = () => {
+    const lat = localStorage.getItem(LAT_KEY);
+    const lng = localStorage.getItem(LNG_KEY);
+    if (lat && lng) {
+      setTextboxValue("user-lat-input", lat);
+      setTextboxValue("user-lng-input", lng);
+      setStatus(`Menggunakan lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`);
+    }
+  };
+
+  const attach = () => {
+    const btn = document.getElementById("geo-locate-btn");
+    if (!btn || btn.dataset.bound === "1") return;
+    btn.dataset.bound = "1";
+    restoreLocation();
+    btn.addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        setStatus("Browser ini tidak mendukung geolocation.");
+        return;
+      }
+      setStatus("Meminta izin lokasi...");
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          saveLocation(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          const message = error && error.message ? error.message : "Gagal mengambil lokasi.";
+          setStatus(`Lokasi gagal diambil: ${message}`);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+      );
+    });
+  };
+
+  const observer = new MutationObserver(() => attach());
+  observer.observe(document.body, { childList: true, subtree: true });
+  attach();
+})();
+</script>
+"""
+
+
 rag = get_rag_engine()
 city_choices = ["Semua kota"] + rag.cities
 
@@ -313,12 +400,16 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             value="",
             label="Latitude Anda",
             placeholder="Contoh: -5.3971",
+            elem_id="user-lat-input",
         )
         user_lng_input = gr.Textbox(
             value="",
             label="Longitude Anda",
             placeholder="Contoh: 105.2668",
+            elem_id="user-lng-input",
         )
+
+    gr.HTML(LOCATION_WIDGET_HTML)
 
     with gr.Row():
         with gr.Column(scale=3):
