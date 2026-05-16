@@ -27,13 +27,13 @@ def get_client() -> Groq:
     return Groq(api_key=api_key)
 
 
-def build_messages(history: list[tuple[str, str | None]]) -> list[dict]:
+def build_messages(history: list[dict]) -> list[dict]:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for user_text, assistant_text in history:
-        if user_text:
-            messages.append({"role": "user", "content": user_text})
-        if assistant_text:
-            messages.append({"role": "assistant", "content": assistant_text})
+    for item in history:
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and content:
+            messages.append({"role": role, "content": content})
     return messages
 
 
@@ -156,7 +156,10 @@ def ask_assistant(message: str, chat_history: list, city: str, min_rating: float
             "Saya belum menemukan coffee shop yang cocok dengan filter dan pertanyaan Anda. "
             "Coba longgarkan filter kota, turunkan rating minimum, atau matikan opsi buka sekarang."
         )
-        updated_history = history + [(clean_message, answer)]
+        updated_history = history + [
+            {"role": "user", "content": clean_message},
+            {"role": "assistant", "content": answer},
+        ]
         return updated_history, updated_history, "", render_sources([])
 
     model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
@@ -170,7 +173,10 @@ def ask_assistant(message: str, chat_history: list, city: str, min_rating: float
         temperature=0.3,
     )
     answer = response.choices[0].message.content or "Maaf, saya belum bisa menjawab."
-    updated_history = history + [(clean_message, answer)]
+    updated_history = history + [
+        {"role": "user", "content": clean_message},
+        {"role": "assistant", "content": answer},
+    ]
     return updated_history, updated_history, "", render_sources(retrieved_docs)
 
 
@@ -209,7 +215,7 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
 
     with gr.Row():
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot(label="Percakapan", height=500)
+            chatbot = gr.Chatbot(label="Percakapan", height=500, type="messages")
             message_input = gr.Textbox(
                 placeholder="Contoh: coffee shop terbaik di Bandar Lampung",
                 label="Pertanyaan",
