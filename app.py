@@ -38,11 +38,22 @@ def build_messages(history: list[dict]) -> list[dict]:
     return messages
 
 
+def parse_float_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_rag_prompt(
     message: str,
     city: str,
     min_rating: float,
     open_now: bool,
+    user_lat: float | None,
+    user_lng: float | None,
 ):
     rag = get_rag_engine()
     retrieved_docs = rag.retrieve(
@@ -51,6 +62,8 @@ def build_rag_prompt(
         city=city,
         min_rating=min_rating,
         open_now=open_now,
+        user_lat=user_lat,
+        user_lng=user_lng,
     )
     if not retrieved_docs:
         return None, []
@@ -93,12 +106,18 @@ def build_rag_prompt(
         f"Filter aktif: kota={city}, rating minimum={min_rating:.1f}, "
         f"buka sekarang={'ya' if open_now else 'tidak'}."
     )
+    location_summary = (
+        f"Lokasi pengguna: lat={user_lat}, lng={user_lng}."
+        if user_lat is not None and user_lng is not None
+        else "Lokasi pengguna tidak diisi."
+    )
     context = "\n\n".join(context_sections)
     prompt = f"""
 Jawab pertanyaan pengguna berdasarkan context berikut.
 Fokus pada data coffee shop dari Google Maps.
 
 {filters_summary}
+{location_summary}
 
 Context:
 {context}
@@ -202,17 +221,23 @@ def ask_assistant(
     city: str,
     min_rating: float,
     open_now: bool,
+    user_lat_input,
+    user_lng_input,
 ):
     history = chat_history or []
     clean_message = (message or "").strip()
     if not clean_message:
         return history, history, "", "<p>Tulis pertanyaan terlebih dahulu.</p>"
 
+    user_lat = parse_float_or_none(user_lat_input)
+    user_lng = parse_float_or_none(user_lng_input)
     prompt, retrieved_docs = build_rag_prompt(
         clean_message,
         city,
         min_rating,
         open_now,
+        user_lat,
+        user_lng,
     )
     if not retrieved_docs:
         answer = (
@@ -248,6 +273,10 @@ def clear_chat():
     return [], [], "", "<p>Source results akan muncul di sini setelah Anda bertanya.</p>"
 
 
+def keep_location_values(user_lat_input, user_lng_input, location_status):
+    return user_lat_input, user_lng_input, location_status
+
+
 rag = get_rag_engine()
 city_choices = ["Semua kota"] + rag.cities
 
@@ -278,6 +307,17 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
         )
 
     with gr.Row():
+        locate_button = gr.Button("Izinkan lokasi untuk pencarian terdekat")
+        location_status = gr.Textbox(
+            value="Lokasi belum diaktifkan.",
+            label="Status Lokasi",
+            interactive=False,
+        )
+
+    user_lat_input = gr.Textbox(value="", visible=False)
+    user_lng_input = gr.Textbox(value="", visible=False)
+
+    with gr.Row():
         with gr.Column(scale=3):
             chatbot = gr.Chatbot(label="Percakapan", height=500)
             message_input = gr.Textbox(
@@ -293,6 +333,62 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
 
     history_state = gr.State([])
 
+    locate_button.click(
+        keep_location_values,
+        inputs=[user_lat_input, user_lng_input, location_status],
+        outputs=[user_lat_input, user_lng_input, location_status],
+        js="""
+        async (currentLat, currentLng, currentStatus) => {
+          const save = (lat, lng, status) => {
+            try {
+              localStorage.setItem("coffee_rag_user_lat", String(lat));
+              localStorage.setItem("coffee_rag_user_lng", String(lng));
+            } catch (e) {}
+            return [String(lat), String(lng), status];
+          };
+
+          if (!navigator.geolocation) {
+            return [currentLat || "", currentLng || "", "Browser ini tidak mendukung geolocation."];
+          }
+
+          return await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                resolve(save(lat, lng, `Lokasi aktif: ${lat.toFixed(6)}, ${lng.toFixed(6)}`));
+              },
+              (error) => {
+                const message = error && error.message ? error.message : "Gagal mengambil lokasi.";
+                resolve([currentLat || "", currentLng || "", `Lokasi gagal diambil: ${message}`]);
+              },
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+            );
+          });
+        }
+        """,
+    )
+
+    demo.load(
+        keep_location_values,
+        inputs=[user_lat_input, user_lng_input, location_status],
+        outputs=[user_lat_input, user_lng_input, location_status],
+        js="""
+        (currentLat, currentLng, currentStatus) => {
+          try {
+            const lat = localStorage.getItem("coffee_rag_user_lat") || currentLat || "";
+            const lng = localStorage.getItem("coffee_rag_user_lng") || currentLng || "";
+            const status = lat && lng
+              ? `Menggunakan lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`
+              : (currentStatus || "Lokasi belum diaktifkan.");
+            return [lat, lng, status];
+          } catch (e) {
+            return [currentLat || "", currentLng || "", currentStatus || "Lokasi belum diaktifkan."];
+          }
+        }
+        """,
+    )
+
     send_button.click(
         ask_assistant,
         inputs=[
@@ -301,6 +397,8 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             city_input,
             rating_input,
             open_now_input,
+            user_lat_input,
+            user_lng_input,
         ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
@@ -312,6 +410,8 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             city_input,
             rating_input,
             open_now_input,
+            user_lat_input,
+            user_lng_input,
         ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
