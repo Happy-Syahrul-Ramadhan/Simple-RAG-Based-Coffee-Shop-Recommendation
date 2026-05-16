@@ -375,17 +375,41 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
         inputs=[user_lat_input, user_lng_input, location_status],
         outputs=[user_lat_input, user_lng_input, location_status],
         js="""
-        (currentLat, currentLng, currentStatus) => {
-          try {
-            const lat = localStorage.getItem("coffee_rag_user_lat") || currentLat || "";
-            const lng = localStorage.getItem("coffee_rag_user_lng") || currentLng || "";
-            const status = lat && lng
-              ? `Menggunakan lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`
-              : (currentStatus || "Lokasi belum diaktifkan.");
-            return [lat, lng, status];
-          } catch (e) {
-            return [currentLat || "", currentLng || "", currentStatus || "Lokasi belum diaktifkan."];
+        async (currentLat, currentLng, currentStatus) => {
+          const fallback = () => {
+            try {
+              const lat = localStorage.getItem("coffee_rag_user_lat") || currentLat || "";
+              const lng = localStorage.getItem("coffee_rag_user_lng") || currentLng || "";
+              const status = lat && lng
+                ? `Menggunakan lokasi tersimpan terakhir: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`
+                : (currentStatus || "Lokasi belum diaktifkan.");
+              return [lat, lng, status];
+            } catch (e) {
+              return [currentLat || "", currentLng || "", currentStatus || "Lokasi belum diaktifkan."];
+            }
+          };
+
+          if (!navigator.geolocation) {
+            return fallback();
           }
+
+          return await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (position) => {
+                const lat = String(position.coords.latitude);
+                const lng = String(position.coords.longitude);
+                try {
+                  localStorage.setItem("coffee_rag_user_lat", lat);
+                  localStorage.setItem("coffee_rag_user_lng", lng);
+                } catch (e) {}
+                resolve([lat, lng, `Lokasi diperbarui otomatis: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`]);
+              },
+              () => {
+                resolve(fallback());
+              },
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+          });
         }
         """,
     )
