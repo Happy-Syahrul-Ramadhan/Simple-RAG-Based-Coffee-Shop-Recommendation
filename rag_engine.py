@@ -389,9 +389,6 @@ class CoffeeRAG:
             show_progress_bar=False,
         )
         query_vector = np.asarray(query_embedding, dtype="float32")
-        candidate_count = min(max(k * 4, 12), len(self.documents))
-        scores, indices = self.index.search(query_vector, candidate_count)
-
         wants_best = any(term in query.lower() for term in ("terbaik", "bagus", "rekomendasi", "favorit"))
         wants_review = any(term in query.lower() for term in ("review", "ulasan", "ramai", "populer"))
         wants_quiet = any(term in query.lower() for term in QUIET_HINTS)
@@ -399,9 +396,22 @@ class CoffeeRAG:
         wants_nearest = any(term in query.lower() for term in NEAREST_HINTS)
         requested_day = extract_query_day(query)
         requested_hour = extract_query_hour(query)
+        nearest_mode = wants_nearest and user_lat is not None and user_lng is not None
+
+        semantic_scores = (self.embeddings @ query_vector[0]).astype("float32")
+        if nearest_mode:
+            candidate_pairs = sorted(
+                ((float(semantic_scores[idx]), idx) for idx in range(len(self.documents))),
+                key=lambda item: item[0],
+                reverse=True,
+            )
+        else:
+            candidate_count = min(max(k * 4, 12), len(self.documents))
+            scores, indices = self.index.search(query_vector, candidate_count)
+            candidate_pairs = list(zip(scores[0], indices[0]))
 
         rescored = []
-        for score, idx in zip(scores[0], indices[0]):
+        for score, idx in candidate_pairs:
             if idx < 0:
                 continue
             metadata = self.metadata[idx]
@@ -473,26 +483,38 @@ class CoffeeRAG:
             if wants_busy and occupancy is not None and occupancy >= 65:
                 final_score += 0.12
 
-            if user_lat is not None and user_lng is not None and distance_km is not None:
+            if nearest_mode and distance_km is not None:
+                final_score += max(0, 0.2 - min(distance_km, 20) / 200)
+            elif user_lat is not None and user_lng is not None and distance_km is not None:
                 final_score += 0.05
-                if wants_nearest:
-                    final_score += max(0, 1.5 - min(distance_km, 15) / 10)
-                else:
-                    final_score += max(0, 0.35 - min(distance_km, 35) / 100)
+                final_score += max(0, 0.35 - min(distance_km, 35) / 100)
             elif wants_nearest:
                 final_score -= 0.2
 
-            rescored.append((final_score, idx))
+            rescored.append((final_score, idx, float(score)))
 
-        rescored.sort(key=lambda item: item[0], reverse=True)
+        if nearest_mode:
+            rescored.sort(
+                key=lambda item: (
+                    self.metadata[item[1]].get("distance_km") is None,
+                    self.metadata[item[1]].get("distance_km")
+                    if self.metadata[item[1]].get("distance_km") is not None
+                    else float("inf"),
+                    -(self.metadata[item[1]].get("score") or 0),
+                    -(self.metadata[item[1]].get("reviews_count") or 0),
+                    -item[2],
+                )
+            )
+        else:
+            rescored.sort(key=lambda item: item[0], reverse=True)
 
         results = []
-        for final_score, idx in rescored[:k]:
+        for final_score, idx, raw_score in rescored[:k]:
             results.append(
                 RetrievedDocument(
                     text=self.documents[idx],
                     metadata=self.metadata[idx],
-                    score=float(final_score),
+                    score=float(final_score if not nearest_mode else raw_score),
                 )
             )
         return results

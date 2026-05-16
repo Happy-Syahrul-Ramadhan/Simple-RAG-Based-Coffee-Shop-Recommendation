@@ -133,6 +133,7 @@ Instruksi jawaban:
 - Saat merekomendasikan tempat, gunakan format `[ID] Nama Tempat` agar sumber bisa ditelusuri.
 - Untuk pertanyaan soal jam ramai atau sepi, prioritaskan `popularTimesHistogram`, bukan `popularTimesLiveText`.
 - Untuk pertanyaan soal tempat terdekat, prioritaskan `jarak_dari_pengguna` jika tersedia.
+- Jika pertanyaan meminta tempat terdekat, anggap urutan context sudah disusun dari jarak paling dekat ke yang lebih jauh.
 """.strip()
     return prompt, retrieved_docs
 
