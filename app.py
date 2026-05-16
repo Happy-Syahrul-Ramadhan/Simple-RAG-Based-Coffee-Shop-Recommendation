@@ -38,22 +38,11 @@ def build_messages(history: list[dict]) -> list[dict]:
     return messages
 
 
-def parse_float_or_none(value):
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def build_rag_prompt(
     message: str,
     city: str,
     min_rating: float,
     open_now: bool,
-    user_lat: float | None,
-    user_lng: float | None,
 ):
     rag = get_rag_engine()
     retrieved_docs = rag.retrieve(
@@ -62,8 +51,6 @@ def build_rag_prompt(
         city=city,
         min_rating=min_rating,
         open_now=open_now,
-        user_lat=user_lat,
-        user_lng=user_lng,
     )
     if not retrieved_docs:
         return None, []
@@ -106,18 +93,12 @@ def build_rag_prompt(
         f"Filter aktif: kota={city}, rating minimum={min_rating:.1f}, "
         f"buka sekarang={'ya' if open_now else 'tidak'}."
     )
-    location_summary = (
-        f"Lokasi pengguna: lat={user_lat}, lng={user_lng}."
-        if user_lat is not None and user_lng is not None
-        else "Lokasi pengguna tidak diisi."
-    )
     context = "\n\n".join(context_sections)
     prompt = f"""
 Jawab pertanyaan pengguna berdasarkan context berikut.
 Fokus pada data coffee shop dari Google Maps.
 
 {filters_summary}
-{location_summary}
 
 Context:
 {context}
@@ -221,36 +202,22 @@ def ask_assistant(
     city: str,
     min_rating: float,
     open_now: bool,
-    user_lat_input,
-    user_lng_input,
 ):
     history = chat_history or []
     clean_message = (message or "").strip()
     if not clean_message:
         return history, history, "", "<p>Tulis pertanyaan terlebih dahulu.</p>"
 
-    user_lat = parse_float_or_none(user_lat_input)
-    user_lng = parse_float_or_none(user_lng_input)
-    if (user_lat is None) ^ (user_lng is None):
-        answer = "Untuk fitur kafe terdekat, isi latitude dan longitude sekaligus."
-        updated_history = history + [
-            {"role": "user", "content": clean_message},
-            {"role": "assistant", "content": answer},
-        ]
-        return updated_history, updated_history, "", "<p>Lokasi belum lengkap.</p>"
     prompt, retrieved_docs = build_rag_prompt(
         clean_message,
         city,
         min_rating,
         open_now,
-        user_lat,
-        user_lng,
     )
     if not retrieved_docs:
         answer = (
             "Saya belum menemukan coffee shop yang cocok dengan filter dan pertanyaan Anda. "
-            "Coba longgarkan filter kota, turunkan rating minimum, matikan opsi buka sekarang, "
-            "atau isi lokasi Anda jika ingin mencari yang terdekat."
+            "Coba longgarkan filter kota, turunkan rating minimum, atau matikan opsi buka sekarang."
         )
         updated_history = history + [
             {"role": "user", "content": clean_message},
@@ -281,93 +248,6 @@ def clear_chat():
     return [], [], "", "<p>Source results akan muncul di sini setelah Anda bertanya.</p>"
 
 
-LOCATION_WIDGET_HTML = """
-<div style="padding:12px; border:1px solid #d7d7d7; border-radius:10px; margin-top:8px;">
-  <div style="font-weight:600; margin-bottom:8px;">Lokasi Otomatis</div>
-  <button id="geo-locate-btn" type="button" style="padding:8px 12px; border:none; border-radius:8px; cursor:pointer;">
-    Gunakan lokasi saya
-  </button>
-  <div id="geo-status" style="margin-top:8px; font-size:14px;">
-    Klik tombol untuk meminta akses lokasi dari browser.
-  </div>
-</div>
-<script>
-(() => {
-  const LAT_KEY = "coffee_rag_user_lat";
-  const LNG_KEY = "coffee_rag_user_lng";
-
-  const setStatus = (text) => {
-    const status = document.getElementById("geo-status");
-    if (status) status.textContent = text;
-  };
-
-  const setTextboxValue = (elemId, value) => {
-    const root = document.getElementById(elemId);
-    if (!root) return false;
-    const input = root.querySelector("input, textarea");
-    if (!input) return false;
-    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
-      || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-    if (nativeSetter) {
-      nativeSetter.call(input, value);
-    } else {
-      input.value = value;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  };
-
-  const saveLocation = (lat, lng) => {
-    localStorage.setItem(LAT_KEY, String(lat));
-    localStorage.setItem(LNG_KEY, String(lng));
-    setTextboxValue("user-lat-input", String(lat));
-    setTextboxValue("user-lng-input", String(lng));
-    setStatus(`Lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`);
-  };
-
-  const restoreLocation = () => {
-    const lat = localStorage.getItem(LAT_KEY);
-    const lng = localStorage.getItem(LNG_KEY);
-    if (lat && lng) {
-      setTextboxValue("user-lat-input", lat);
-      setTextboxValue("user-lng-input", lng);
-      setStatus(`Menggunakan lokasi tersimpan: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`);
-    }
-  };
-
-  const attach = () => {
-    const btn = document.getElementById("geo-locate-btn");
-    if (!btn || btn.dataset.bound === "1") return;
-    btn.dataset.bound = "1";
-    restoreLocation();
-    btn.addEventListener("click", () => {
-      if (!navigator.geolocation) {
-        setStatus("Browser ini tidak mendukung geolocation.");
-        return;
-      }
-      setStatus("Meminta izin lokasi...");
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          saveLocation(position.coords.latitude, position.coords.longitude);
-        },
-        (error) => {
-          const message = error && error.message ? error.message : "Gagal mengambil lokasi.";
-          setStatus(`Lokasi gagal diambil: ${message}`);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-      );
-    });
-  };
-
-  const observer = new MutationObserver(() => attach());
-  observer.observe(document.body, { childList: true, subtree: true });
-  attach();
-})();
-</script>
-"""
-
-
 rag = get_rag_engine()
 city_choices = ["Semua kota"] + rag.cities
 
@@ -396,20 +276,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             value=False,
             label="Buka Sekarang",
         )
-        user_lat_input = gr.Textbox(
-            value="",
-            label="Latitude Anda",
-            placeholder="Contoh: -5.3971",
-            elem_id="user-lat-input",
-        )
-        user_lng_input = gr.Textbox(
-            value="",
-            label="Longitude Anda",
-            placeholder="Contoh: 105.2668",
-            elem_id="user-lng-input",
-        )
-
-    gr.HTML(LOCATION_WIDGET_HTML)
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -435,8 +301,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             city_input,
             rating_input,
             open_now_input,
-            user_lat_input,
-            user_lng_input,
         ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
@@ -448,8 +312,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             city_input,
             rating_input,
             open_now_input,
-            user_lat_input,
-            user_lng_input,
         ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
