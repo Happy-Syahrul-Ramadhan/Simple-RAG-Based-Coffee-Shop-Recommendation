@@ -60,7 +60,7 @@ with gr.Blocks(title="Simple Groq Chatbot") as demo:
             container=False,
             scale=8,
         ),
-        chatbot=gr.Chatbot(height=500, type="messages"),
+        chatbot=gr.Chatbot(height=500),
         additional_inputs=[],
     )
 
