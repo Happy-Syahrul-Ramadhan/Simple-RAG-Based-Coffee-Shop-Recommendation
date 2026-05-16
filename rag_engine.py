@@ -45,6 +45,14 @@ LOCATION_HINTS = (
     "lampung tengah",
     "kabupaten lampung tengah",
 )
+QUIET_HINTS = ("tidak ramai", "sepi", "tenang", "nggak ramai", "ga ramai", "tidak padat")
+BUSY_HINTS = ("ramai", "padat", "sibuk", "penuh", "crowded")
+TIME_OF_DAY_HINTS = {
+    "pagi": 9,
+    "siang": 13,
+    "sore": 16,
+    "malam": 20,
+}
 
 
 @dataclass
@@ -117,6 +125,73 @@ def summarize_popular_times(histogram: dict | None) -> str:
     return "Puncak keramaian: " + "; ".join(peaks[:4]) + "."
 
 
+def extract_query_day(query: str) -> str | None:
+    query_lower = query.lower()
+    for day_name, day_code in DAY_NAME_TO_CODE.items():
+        if day_name in query_lower:
+            return day_code
+    return None
+
+
+def extract_query_hour(query: str) -> int | None:
+    query_lower = query.lower()
+    match = re.search(r"jam\s+(\d{1,2})(?:[:.](\d{2}))?", query_lower)
+    if match:
+        hour = int(match.group(1))
+        if "siang" in query_lower and 1 <= hour <= 5:
+            return min(hour + 12, 23)
+        if "sore" in query_lower and 1 <= hour <= 6:
+            return min(hour + 12, 23)
+        if "malam" in query_lower and 1 <= hour <= 11:
+            return min(hour + 12, 23)
+        return hour if 0 <= hour <= 23 else None
+
+    for label, hour in TIME_OF_DAY_HINTS.items():
+        if label in query_lower:
+            return hour
+    return None
+
+
+def get_occupancy_percent(
+    histogram: dict | None,
+    hour: int,
+    day_code: str | None = None,
+) -> float | None:
+    if not histogram:
+        return None
+
+    if day_code:
+        buckets = histogram.get(day_code) or []
+        for item in buckets:
+            if item.get("hour") == hour:
+                return item.get("occupancyPercent")
+        return None
+
+    values = []
+    for code in DAY_ORDER:
+        buckets = histogram.get(code) or []
+        for item in buckets:
+            if item.get("hour") == hour and item.get("occupancyPercent") is not None:
+                values.append(float(item["occupancyPercent"]))
+    if not values:
+        return None
+    return float(sum(values) / len(values))
+
+
+def describe_occupancy(value: float | None) -> str:
+    if value is None:
+        return "Tidak tersedia"
+    if value <= 20:
+        return "Sangat sepi"
+    if value <= 40:
+        return "Cenderung sepi"
+    if value <= 60:
+        return "Sedang"
+    if value <= 80:
+        return "Ramai"
+    return "Sangat ramai"
+
+
 def format_status(item: dict) -> str:
     if item.get("permanentlyClosed"):
         return "Tempat ini permanen tutup."
@@ -182,6 +257,7 @@ def build_document(item: dict) -> str:
     menu = normalize_text(item.get("menu"))
     plus_code = normalize_text(item.get("plusCode"))
     live_text = normalize_text(item.get("popularTimesLiveText"))
+    histogram = item.get("popularTimesHistogram")
 
     location = item.get("location") or {}
     lat = location.get("lat")
@@ -205,7 +281,14 @@ def build_document(item: dict) -> str:
         f"Jumlah foto: {images if images is not None else 'Tidak tersedia'}.",
         f"Jam buka: {format_opening_hours(item.get('openingHours'))}",
         f"Status keramaian saat di-scrape: {live_text or 'Tidak tersedia'}.",
-        summarize_popular_times(item.get("popularTimesHistogram")),
+        summarize_popular_times(histogram),
+        (
+            "Estimasi keramaian jam 13.00: "
+            f"{describe_occupancy(get_occupancy_percent(histogram, 13))} "
+            f"({get_occupancy_percent(histogram, 13):.1f}%)."
+            if get_occupancy_percent(histogram, 13) is not None
+            else "Estimasi keramaian jam 13.00 tidak tersedia."
+        ),
         f"Nomor telepon: {phone or 'Tidak tersedia'}.",
         f"Menu: {menu or 'Tidak tersedia'}.",
         f"Plus code: {plus_code or 'Tidak tersedia'}.",
@@ -236,12 +319,14 @@ class CoffeeRAG:
                 "opening_hours_raw": item.get("openingHours") or [],
                 "popular_live_text": item.get("popularTimesLiveText"),
                 "phone": item.get("phone"),
+                "popular_histogram_raw": item.get("popularTimesHistogram") or {},
                 "lat": (item.get("location") or {}).get("lat"),
                 "lng": (item.get("location") or {}).get("lng"),
                 "maps_url": to_maps_url(
                     (item.get("location") or {}).get("lat"),
                     (item.get("location") or {}).get("lng"),
                 ),
+                "avg_occupancy_13": get_occupancy_percent(item.get("popularTimesHistogram"), 13),
             }
             for item in self.records
         ]
@@ -280,6 +365,10 @@ class CoffeeRAG:
 
         wants_best = any(term in query.lower() for term in ("terbaik", "bagus", "rekomendasi", "favorit"))
         wants_review = any(term in query.lower() for term in ("review", "ulasan", "ramai", "populer"))
+        wants_quiet = any(term in query.lower() for term in QUIET_HINTS)
+        wants_busy = any(term in query.lower() for term in BUSY_HINTS) and not wants_quiet
+        requested_day = extract_query_day(query)
+        requested_hour = extract_query_hour(query)
 
         rescored = []
         for score, idx in zip(scores[0], indices[0]):
@@ -299,6 +388,18 @@ class CoffeeRAG:
             if open_now and open_status is not True:
                 continue
 
+            occupancy = None
+            if requested_hour is not None:
+                occupancy = get_occupancy_percent(
+                    metadata.get("popular_histogram_raw"),
+                    requested_hour,
+                    requested_day,
+                )
+            metadata["requested_hour"] = requested_hour
+            metadata["requested_day"] = requested_day
+            metadata["requested_occupancy"] = occupancy
+            metadata["requested_occupancy_label"] = describe_occupancy(occupancy)
+
             final_score = float(score)
 
             overlap = len(query_tokens & self.doc_tokens[idx])
@@ -317,6 +418,23 @@ class CoffeeRAG:
                 final_score += min(np.log1p(reviews) / 40, 0.08)
             if wants_review:
                 final_score += min(np.log1p(reviews) / 20, 0.15)
+
+            if requested_hour is not None:
+                if occupancy is not None:
+                    final_score += 0.1
+                    if wants_quiet:
+                        final_score += (100 - occupancy) / 120
+                    elif wants_busy:
+                        final_score += occupancy / 120
+                    else:
+                        final_score += 0.03
+                else:
+                    final_score -= 0.15
+
+            if wants_quiet and occupancy is not None and occupancy <= 35:
+                final_score += 0.12
+            if wants_busy and occupancy is not None and occupancy >= 65:
+                final_score += 0.12
 
             rescored.append((final_score, idx))
 

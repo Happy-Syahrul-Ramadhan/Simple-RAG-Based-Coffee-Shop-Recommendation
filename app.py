@@ -1,5 +1,6 @@
 import html
 import os
+import re
 
 import gradio as gr
 from dotenv import load_dotenv
@@ -63,11 +64,18 @@ def build_rag_prompt(message: str, city: str, min_rating: float, open_now: bool)
         score = doc.metadata.get("score")
         reviews_count = doc.metadata.get("reviews_count")
         open_label = format_open_label(doc.metadata.get("open_now"))
+        requested_hour = doc.metadata.get("requested_hour")
+        occupancy = doc.metadata.get("requested_occupancy")
+        occupancy_label = doc.metadata.get("requested_occupancy_label")
+        occupancy_text = "tidak tersedia"
+        if requested_hour is not None and occupancy is not None:
+            occupancy_text = f"{requested_hour:02d}.00 -> {occupancy_label} ({occupancy:.1f}%)"
         header = (
             f"[{idx}] {title} | kota: {result_city} | "
             f"rating: {score if score is not None else 'N/A'} | "
             f"reviews: {reviews_count if reviews_count is not None else 'N/A'} | "
-            f"buka sekarang: {open_label}"
+            f"buka sekarang: {open_label} | "
+            f"keramaian_jam_diminta: {occupancy_text}"
         )
         context_sections.append(f"{header}\n{doc.text}")
 
@@ -93,8 +101,26 @@ Instruksi jawaban:
 - Jika pengguna meminta rekomendasi, bandingkan beberapa tempat dari context.
 - Jika pengguna bertanya lokasi, jam buka, rating, review, atau tingkat keramaian, ambil dari context.
 - Jika data tidak cukup, katakan bahwa data pada dataset belum memuat informasi itu.
+- Saat merekomendasikan tempat, gunakan format `[ID] Nama Tempat` agar sumber bisa ditelusuri.
+- Untuk pertanyaan soal jam ramai atau sepi, prioritaskan `popularTimesHistogram`, bukan `popularTimesLiveText`.
 """.strip()
     return prompt, retrieved_docs
+
+
+def extract_recommended_docs(answer: str, retrieved_docs: list) -> list:
+    if not answer or not retrieved_docs:
+        return retrieved_docs
+
+    answer_lower = answer.lower()
+    selected = []
+    selected_indexes = {int(match) for match in re.findall(r"\[(\d+)\]", answer)}
+
+    for idx, doc in enumerate(retrieved_docs, start=1):
+        title = (doc.metadata.get("title") or "").strip().lower()
+        if idx in selected_indexes or (title and title in answer_lower):
+            selected.append(doc)
+
+    return selected or retrieved_docs
 
 
 def render_sources(retrieved_docs: list) -> str:
@@ -121,6 +147,9 @@ def render_sources(retrieved_docs: list) -> str:
         busy = html.escape(meta.get("popular_live_text") or "Tidak tersedia")
         open_label = format_open_label(meta.get("open_now"))
         maps_url = meta.get("maps_url")
+        requested_hour = meta.get("requested_hour")
+        requested_occupancy = meta.get("requested_occupancy")
+        requested_label = html.escape(meta.get("requested_occupancy_label") or "Tidak tersedia")
 
         lines = [
             f"<div style='padding:12px; margin-bottom:12px; border:1px solid #d7d7d7; border-radius:10px;'>",
@@ -133,6 +162,15 @@ def render_sources(retrieved_docs: list) -> str:
             f"<div>Telepon: {phone}</div>",
             f"<div>Popular times: {busy}</div>",
         ]
+        if requested_hour is not None:
+            if requested_occupancy is not None:
+                lines.append(
+                    f"<div>Keramaian sekitar pukul {requested_hour:02d}.00: {requested_label} ({requested_occupancy:.1f}%)</div>"
+                )
+            else:
+                lines.append(
+                    f"<div>Keramaian sekitar pukul {requested_hour:02d}.00: Tidak tersedia</div>"
+                )
         if maps_url:
             safe_url = html.escape(maps_url, quote=True)
             lines.append(
@@ -173,11 +211,12 @@ def ask_assistant(message: str, chat_history: list, city: str, min_rating: float
         temperature=0.3,
     )
     answer = response.choices[0].message.content or "Maaf, saya belum bisa menjawab."
+    recommended_docs = extract_recommended_docs(answer, retrieved_docs)
     updated_history = history + [
         {"role": "user", "content": clean_message},
         {"role": "assistant", "content": answer},
     ]
-    return updated_history, updated_history, "", render_sources(retrieved_docs)
+    return updated_history, updated_history, "", render_sources(recommended_docs)
 
 
 def clear_chat():
