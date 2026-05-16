@@ -53,11 +53,10 @@ def chat(message: str, history: list) -> str:
     return response.choices[0].message.content or "Maaf, saya belum bisa menjawab."
 
 
-with gr.Blocks(title="Simple Groq Chatbot") as demo:
+with gr.Blocks(title="Simple Chatbot untuk mencari Coffe Shop sesuai kriteria yg anda inginkan") as demo:
     gr.Markdown(
         """
-        # Simple Groq Chatbot
-        Chatbot LLM sederhana menggunakan Groq API.
+        # Simple Chatbot untuk pencarian Coffe Shop dengan konteks yang ada di bandar lampung
         """
     )
 
