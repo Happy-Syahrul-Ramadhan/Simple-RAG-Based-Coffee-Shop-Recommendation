@@ -47,6 +47,31 @@ def parse_float_or_none(value):
         return None
 
 
+def resolve_city_filter(message: str, selected_city: str, available_cities: list[str]) -> str:
+    if selected_city and selected_city != "Semua kota":
+        return selected_city
+
+    query_lower = (message or "").lower()
+    city_aliases = {
+        "metro": "Kota Metro",
+        "kota metro": "Kota Metro",
+        "bandar lampung": "Kota Bandar Lampung",
+        "kota bandar lampung": "Kota Bandar Lampung",
+        "lampung timur": "Kabupaten Lampung Timur",
+        "kabupaten lampung timur": "Kabupaten Lampung Timur",
+        "lampung selatan": "Kabupaten Lampung Selatan",
+        "kabupaten lampung selatan": "Kabupaten Lampung Selatan",
+        "lampung tengah": "Kabupaten Lampung Tengah",
+        "kabupaten lampung tengah": "Kabupaten Lampung Tengah",
+    }
+
+    for alias, resolved_city in city_aliases.items():
+        if alias in query_lower and resolved_city in available_cities:
+            return resolved_city
+
+    return "Semua kota"
+
+
 def build_rag_prompt(
     message: str,
     city: str,
@@ -232,9 +257,10 @@ def ask_assistant(
 
     user_lat = parse_float_or_none(user_lat_input)
     user_lng = parse_float_or_none(user_lng_input)
+    effective_city = resolve_city_filter(clean_message, city, city_choices[1:])
     prompt, retrieved_docs = build_rag_prompt(
         clean_message,
-        city,
+        effective_city,
         min_rating,
         open_now,
         user_lat,
