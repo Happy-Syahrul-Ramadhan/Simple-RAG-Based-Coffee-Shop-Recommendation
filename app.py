@@ -102,6 +102,7 @@ def build_rag_prompt(
 
     context_sections = []
     for idx, doc in enumerate(retrieved_docs, start=1):
+        doc.metadata["context_id"] = idx
         title = doc.metadata.get("title") or f"Dokumen {idx}"
         result_city = doc.metadata.get("city") or "Kota tidak tersedia"
         score = doc.metadata.get("score")
@@ -176,7 +177,18 @@ def extract_recommended_docs(answer: str, retrieved_docs: list) -> list:
         if idx in selected_indexes or (title and title in answer_lower):
             selected.append(doc)
 
-    return selected or retrieved_docs
+    if selected:
+        return selected
+
+    if selected_indexes:
+        exact_selected = [
+            doc for doc in retrieved_docs
+            if doc.metadata.get("context_id") in selected_indexes
+        ]
+        if exact_selected:
+            return exact_selected
+
+    return retrieved_docs
 
 
 def render_sources(retrieved_docs: list) -> str:
@@ -193,7 +205,8 @@ def render_sources(retrieved_docs: list) -> str:
     blocks = ["<div>"]
     for idx, doc in enumerate(retrieved_docs, start=1):
         meta = doc.metadata
-        title = html.escape(meta.get("title") or f"Hasil {idx}")
+        context_id = meta.get("context_id", idx)
+        title = html.escape(meta.get("title") or f"Hasil {context_id}")
         city = html.escape(meta.get("city") or "Kota tidak tersedia")
         address = html.escape(meta.get("address") or "Alamat tidak tersedia")
         opening_hours = html.escape(meta.get("opening_hours") or "Jam buka tidak tersedia")
@@ -210,7 +223,7 @@ def render_sources(retrieved_docs: list) -> str:
 
         lines = [
             f"<div style='padding:12px; margin-bottom:12px; border:1px solid #d7d7d7; border-radius:10px;'>",
-            f"<div><strong>#{idx}. {title}</strong></div>",
+            f"<div><strong>[{context_id}] {title}</strong></div>",
             f"<div>Kota: {city}</div>",
             f"<div>Rating: {rating if rating is not None else 'N/A'} | Reviews: {reviews if reviews is not None else 'N/A'}</div>",
             f"<div>{open_label}</div>",
