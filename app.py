@@ -215,7 +215,7 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
 
     with gr.Row():
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot(label="Percakapan", height=500, type="messages")
+            chatbot = gr.Chatbot(label="Percakapan", height=500)
             message_input = gr.Textbox(
                 placeholder="Contoh: coffee shop terbaik di Bandar Lampung",
                 label="Pertanyaan",
