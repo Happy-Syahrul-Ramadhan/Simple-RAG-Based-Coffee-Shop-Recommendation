@@ -244,9 +244,6 @@ def render_sources(retrieved_docs: list) -> str:
 def ask_assistant(
     message: str,
     chat_history: list,
-    city: str,
-    min_rating: float,
-    open_now: bool,
     user_lat_input,
     user_lng_input,
 ):
@@ -257,12 +254,12 @@ def ask_assistant(
 
     user_lat = parse_float_or_none(user_lat_input)
     user_lng = parse_float_or_none(user_lng_input)
-    effective_city = resolve_city_filter(clean_message, city, city_choices[1:])
+    effective_city = resolve_city_filter(clean_message, "Semua kota", city_choices[1:])
     prompt, retrieved_docs = build_rag_prompt(
         clean_message,
         effective_city,
-        min_rating,
-        open_now,
+        0.0,
+        False,
         user_lat,
         user_lng,
     )
@@ -314,24 +311,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
         Tanya coffee shop dari dataset Google Maps, lengkap dengan filter dan source results.
         """
     )
-
-    with gr.Row():
-        city_input = gr.Dropdown(
-            choices=city_choices,
-            value="Semua kota",
-            label="Filter Kota",
-        )
-        rating_input = gr.Slider(
-            minimum=0,
-            maximum=5,
-            value=0,
-            step=0.1,
-            label="Rating Minimum",
-        )
-        open_now_input = gr.Checkbox(
-            value=False,
-            label="Buka Sekarang",
-        )
 
     with gr.Row():
         locate_button = gr.Button("Izinkan lokasi untuk pencarian terdekat")
@@ -445,9 +424,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
         inputs=[
             message_input,
             history_state,
-            city_input,
-            rating_input,
-            open_now_input,
             user_lat_input,
             user_lng_input,
         ],
@@ -458,9 +434,6 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
         inputs=[
             message_input,
             history_state,
-            city_input,
-            rating_input,
-            open_now_input,
             user_lat_input,
             user_lng_input,
         ],
