@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -47,6 +48,7 @@ LOCATION_HINTS = (
 )
 QUIET_HINTS = ("tidak ramai", "sepi", "tenang", "nggak ramai", "ga ramai", "tidak padat")
 BUSY_HINTS = ("ramai", "padat", "sibuk", "penuh", "crowded")
+NEAREST_HINTS = ("terdekat", "dekat", "sekitar saya", "near me", "paling dekat")
 TIME_OF_DAY_HINTS = {
     "pagi": 9,
     "siang": 13,
@@ -70,6 +72,31 @@ def to_maps_url(lat: float | None, lng: float | None) -> str | None:
     if lat is None or lng is None:
         return None
     return f"https://www.google.com/maps?q={lat},{lng}"
+
+
+def haversine_distance_km(
+    user_lat: float | None,
+    user_lng: float | None,
+    place_lat: float | None,
+    place_lng: float | None,
+) -> float | None:
+    if None in {user_lat, user_lng, place_lat, place_lng}:
+        return None
+
+    earth_radius_km = 6371.0
+    lat1 = math.radians(float(user_lat))
+    lon1 = math.radians(float(user_lng))
+    lat2 = math.radians(float(place_lat))
+    lon2 = math.radians(float(place_lng))
+
+    delta_lat = lat2 - lat1
+    delta_lon = lon2 - lon1
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return earth_radius_km * c
 
 
 def tokenize(text: str) -> set[str]:
@@ -352,6 +379,8 @@ class CoffeeRAG:
         city: str | None = None,
         min_rating: float = 0.0,
         open_now: bool = False,
+        user_lat: float | None = None,
+        user_lng: float | None = None,
     ) -> list[RetrievedDocument]:
         query_tokens = tokenize(query)
         query_embedding = self.model.encode(
@@ -367,6 +396,7 @@ class CoffeeRAG:
         wants_review = any(term in query.lower() for term in ("review", "ulasan", "ramai", "populer"))
         wants_quiet = any(term in query.lower() for term in QUIET_HINTS)
         wants_busy = any(term in query.lower() for term in BUSY_HINTS) and not wants_quiet
+        wants_nearest = any(term in query.lower() for term in NEAREST_HINTS)
         requested_day = extract_query_day(query)
         requested_hour = extract_query_hour(query)
 
@@ -399,6 +429,13 @@ class CoffeeRAG:
             metadata["requested_day"] = requested_day
             metadata["requested_occupancy"] = occupancy
             metadata["requested_occupancy_label"] = describe_occupancy(occupancy)
+            distance_km = haversine_distance_km(
+                user_lat,
+                user_lng,
+                metadata.get("lat"),
+                metadata.get("lng"),
+            )
+            metadata["distance_km"] = distance_km
 
             final_score = float(score)
 
@@ -435,6 +472,15 @@ class CoffeeRAG:
                 final_score += 0.12
             if wants_busy and occupancy is not None and occupancy >= 65:
                 final_score += 0.12
+
+            if user_lat is not None and user_lng is not None and distance_km is not None:
+                final_score += 0.05
+                if wants_nearest:
+                    final_score += max(0, 1.5 - min(distance_km, 15) / 10)
+                else:
+                    final_score += max(0, 0.35 - min(distance_km, 35) / 100)
+            elif wants_nearest:
+                final_score -= 0.2
 
             rescored.append((final_score, idx))
 

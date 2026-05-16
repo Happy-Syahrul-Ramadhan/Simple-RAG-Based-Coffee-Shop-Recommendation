@@ -38,7 +38,23 @@ def build_messages(history: list[dict]) -> list[dict]:
     return messages
 
 
-def build_rag_prompt(message: str, city: str, min_rating: float, open_now: bool):
+def parse_float_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_rag_prompt(
+    message: str,
+    city: str,
+    min_rating: float,
+    open_now: bool,
+    user_lat: float | None,
+    user_lng: float | None,
+):
     rag = get_rag_engine()
     retrieved_docs = rag.retrieve(
         message,
@@ -46,6 +62,8 @@ def build_rag_prompt(message: str, city: str, min_rating: float, open_now: bool)
         city=city,
         min_rating=min_rating,
         open_now=open_now,
+        user_lat=user_lat,
+        user_lng=user_lng,
     )
     if not retrieved_docs:
         return None, []
@@ -67,15 +85,20 @@ def build_rag_prompt(message: str, city: str, min_rating: float, open_now: bool)
         requested_hour = doc.metadata.get("requested_hour")
         occupancy = doc.metadata.get("requested_occupancy")
         occupancy_label = doc.metadata.get("requested_occupancy_label")
+        distance_km = doc.metadata.get("distance_km")
         occupancy_text = "tidak tersedia"
+        distance_text = "tidak tersedia"
         if requested_hour is not None and occupancy is not None:
             occupancy_text = f"{requested_hour:02d}.00 -> {occupancy_label} ({occupancy:.1f}%)"
+        if distance_km is not None:
+            distance_text = f"{distance_km:.2f} km"
         header = (
             f"[{idx}] {title} | kota: {result_city} | "
             f"rating: {score if score is not None else 'N/A'} | "
             f"reviews: {reviews_count if reviews_count is not None else 'N/A'} | "
             f"buka sekarang: {open_label} | "
-            f"keramaian_jam_diminta: {occupancy_text}"
+            f"keramaian_jam_diminta: {occupancy_text} | "
+            f"jarak_dari_pengguna: {distance_text}"
         )
         context_sections.append(f"{header}\n{doc.text}")
 
@@ -83,12 +106,18 @@ def build_rag_prompt(message: str, city: str, min_rating: float, open_now: bool)
         f"Filter aktif: kota={city}, rating minimum={min_rating:.1f}, "
         f"buka sekarang={'ya' if open_now else 'tidak'}."
     )
+    location_summary = (
+        f"Lokasi pengguna: lat={user_lat}, lng={user_lng}."
+        if user_lat is not None and user_lng is not None
+        else "Lokasi pengguna tidak diisi."
+    )
     context = "\n\n".join(context_sections)
     prompt = f"""
 Jawab pertanyaan pengguna berdasarkan context berikut.
 Fokus pada data coffee shop dari Google Maps.
 
 {filters_summary}
+{location_summary}
 
 Context:
 {context}
@@ -103,6 +132,7 @@ Instruksi jawaban:
 - Jika data tidak cukup, katakan bahwa data pada dataset belum memuat informasi itu.
 - Saat merekomendasikan tempat, gunakan format `[ID] Nama Tempat` agar sumber bisa ditelusuri.
 - Untuk pertanyaan soal jam ramai atau sepi, prioritaskan `popularTimesHistogram`, bukan `popularTimesLiveText`.
+- Untuk pertanyaan soal tempat terdekat, prioritaskan `jarak_dari_pengguna` jika tersedia.
 """.strip()
     return prompt, retrieved_docs
 
@@ -150,6 +180,7 @@ def render_sources(retrieved_docs: list) -> str:
         requested_hour = meta.get("requested_hour")
         requested_occupancy = meta.get("requested_occupancy")
         requested_label = html.escape(meta.get("requested_occupancy_label") or "Tidak tersedia")
+        distance_km = meta.get("distance_km")
 
         lines = [
             f"<div style='padding:12px; margin-bottom:12px; border:1px solid #d7d7d7; border-radius:10px;'>",
@@ -162,6 +193,8 @@ def render_sources(retrieved_docs: list) -> str:
             f"<div>Telepon: {phone}</div>",
             f"<div>Popular times: {busy}</div>",
         ]
+        if distance_km is not None:
+            lines.append(f"<div>Jarak dari lokasi Anda: {distance_km:.2f} km</div>")
         if requested_hour is not None:
             if requested_occupancy is not None:
                 lines.append(
@@ -182,17 +215,42 @@ def render_sources(retrieved_docs: list) -> str:
     return "".join(blocks)
 
 
-def ask_assistant(message: str, chat_history: list, city: str, min_rating: float, open_now: bool):
+def ask_assistant(
+    message: str,
+    chat_history: list,
+    city: str,
+    min_rating: float,
+    open_now: bool,
+    user_lat_input,
+    user_lng_input,
+):
     history = chat_history or []
     clean_message = (message or "").strip()
     if not clean_message:
         return history, history, "", "<p>Tulis pertanyaan terlebih dahulu.</p>"
 
-    prompt, retrieved_docs = build_rag_prompt(clean_message, city, min_rating, open_now)
+    user_lat = parse_float_or_none(user_lat_input)
+    user_lng = parse_float_or_none(user_lng_input)
+    if (user_lat is None) ^ (user_lng is None):
+        answer = "Untuk fitur kafe terdekat, isi latitude dan longitude sekaligus."
+        updated_history = history + [
+            {"role": "user", "content": clean_message},
+            {"role": "assistant", "content": answer},
+        ]
+        return updated_history, updated_history, "", "<p>Lokasi belum lengkap.</p>"
+    prompt, retrieved_docs = build_rag_prompt(
+        clean_message,
+        city,
+        min_rating,
+        open_now,
+        user_lat,
+        user_lng,
+    )
     if not retrieved_docs:
         answer = (
             "Saya belum menemukan coffee shop yang cocok dengan filter dan pertanyaan Anda. "
-            "Coba longgarkan filter kota, turunkan rating minimum, atau matikan opsi buka sekarang."
+            "Coba longgarkan filter kota, turunkan rating minimum, matikan opsi buka sekarang, "
+            "atau isi lokasi Anda jika ingin mencari yang terdekat."
         )
         updated_history = history + [
             {"role": "user", "content": clean_message},
@@ -251,6 +309,16 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
             value=False,
             label="Buka Sekarang",
         )
+        user_lat_input = gr.Textbox(
+            value="",
+            label="Latitude Anda",
+            placeholder="Contoh: -5.3971",
+        )
+        user_lng_input = gr.Textbox(
+            value="",
+            label="Longitude Anda",
+            placeholder="Contoh: 105.2668",
+        )
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -270,12 +338,28 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
 
     send_button.click(
         ask_assistant,
-        inputs=[message_input, history_state, city_input, rating_input, open_now_input],
+        inputs=[
+            message_input,
+            history_state,
+            city_input,
+            rating_input,
+            open_now_input,
+            user_lat_input,
+            user_lng_input,
+        ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
     message_input.submit(
         ask_assistant,
-        inputs=[message_input, history_state, city_input, rating_input, open_now_input],
+        inputs=[
+            message_input,
+            history_state,
+            city_input,
+            rating_input,
+            open_now_input,
+            user_lat_input,
+            user_lng_input,
+        ],
         outputs=[chatbot, history_state, message_input, sources_output],
     )
     clear_button.click(
