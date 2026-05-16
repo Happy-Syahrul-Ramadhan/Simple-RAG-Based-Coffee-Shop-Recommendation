@@ -313,7 +313,7 @@ with gr.Blocks(title="Coffee Shop RAG Chatbot") as demo:
     )
 
     with gr.Row():
-        locate_button = gr.Button("Izinkan lokasi untuk pencarian terdekat")
+        locate_button = gr.Button("Update lokasi untuk pencarian terdekat")
         location_status = gr.Textbox(
             value="Lokasi belum diaktifkan.",
             label="Status Lokasi",
