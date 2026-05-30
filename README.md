@@ -11,7 +11,57 @@ pinned: false
 
 # Simple Groq Chatbot
 
-Setup chatbot Groq berbasis RAG untuk tanya jawab coffee shop dari dataset Google Maps di `data/data-maps.json`.
+Proyek ini adalah sistem rekomendasi coffee shop berbasis RAG (Retrieval-Augmented Generation) untuk wilayah Lampung.
+Chatbot memanfaatkan data Google Maps di `data/data-maps.json` untuk mencari tempat yang relevan, lalu menghasilkan jawaban yang faktual berdasarkan context retrieval.
+Fokus utama proyek ini adalah membantu pengguna menemukan dan membandingkan coffee shop di Lampung berdasarkan lokasi, rating, jam buka, tingkat keramaian, dan informasi pendukung lainnya.
+
+## Alur sistem (step-by-step)
+
+1. Pengguna mengirim pertanyaan dari UI Gradio di `app.py`.
+2. Aplikasi mengambil input pendukung (misalnya lokasi pengguna jika tersedia).
+3. `app.py` memanggil `get_rag_engine()` untuk mengambil instance `CoffeeRAG`.
+4. Saat startup pertama, `CoffeeRAG`:
+   - Membaca `data/data-maps.json`
+   - Memfilter data yang relevan dengan coffee shop
+   - Membangun dokumen konteks per tempat (nama, alamat, rating, review, jam buka, popular times, koordinat, dll)
+   - Membuat embedding dengan `sentence-transformers`
+   - Menyusun FAISS index untuk semantic retrieval
+5. Untuk setiap pertanyaan, `rag.retrieve(...)` dijalankan:
+   - Semantic search top kandidat berbasis embedding
+   - Filter tambahan (kota, rating minimum, buka sekarang)
+   - Reranking hybrid (kecocokan token, rating/review, jam ramai/sepi, jarak terdekat)
+6. Top dokumen hasil retrieval disusun menjadi context terstruktur (dengan ID sumber, metadata penting, dan ringkasan fakta).
+7. `app.py` membangun prompt final (system prompt + context + pertanyaan pengguna).
+8. Prompt dikirim ke model Groq untuk menghasilkan jawaban.
+9. Jawaban diproses untuk mengekstrak referensi dokumen yang direkomendasikan.
+10. UI menampilkan:
+	- Jawaban asisten
+	- Source results (nama tempat, rating, alamat, jam buka, popular times, link Google Maps)
+
+## Flowchart alur RAG
+
+```mermaid
+flowchart TD
+	A[User input di Gradio UI] --> B[app.py: parse message dan lokasi]
+	B --> C[get_rag_engine]
+	C --> D{Engine sudah ada di cache?}
+	D -- Ya --> H[Gunakan engine yang sama]
+	D -- Tidak --> E[Load data data-maps.json]
+	E --> F[Filter coffee shop + build dokumen]
+	F --> G[Embedding + FAISS indexing]
+	G --> H
+
+	H --> I[retrieve query]
+	I --> J[Semantic search kandidat]
+	J --> K[Filter: kota, rating, buka sekarang]
+	K --> L[Reranking: intent, review, occupancy, jarak]
+	L --> M[Top-K context docs]
+
+	M --> N[Build prompt final]
+	N --> O[Groq LLM generation]
+	O --> P[Ekstrak sumber yang direkomendasikan]
+	P --> Q[Tampilkan jawaban + source results]
+```
 
 Fitur utama:
 
