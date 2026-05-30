@@ -1,15 +1,4 @@
----
-title: Simple Groq Chatbot
-emoji: 🤖
-colorFrom: blue
-colorTo: green
-sdk: gradio
-sdk_version: 6.13.0
-app_file: app.py
-pinned: false
----
-
-# Simple Groq Chatbot
+# Simple Chatbot
 
 Proyek ini adalah sistem rekomendasi coffee shop berbasis RAG (Retrieval-Augmented Generation) untuk wilayah Lampung.
 Chatbot memanfaatkan data Google Maps di `data/data-maps.json` untuk mencari tempat yang relevan, lalu menghasilkan jawaban yang faktual berdasarkan context retrieval.
@@ -32,7 +21,7 @@ Fokus utama proyek ini adalah membantu pengguna menemukan dan membandingkan coff
    - Reranking hybrid (kecocokan token, rating/review, jam ramai/sepi, jarak terdekat)
 6. Top dokumen hasil retrieval disusun menjadi context terstruktur (dengan ID sumber, metadata penting, dan ringkasan fakta).
 7. `app.py` membangun prompt final (system prompt + context + pertanyaan pengguna).
-8. Prompt dikirim ke model Groq untuk menghasilkan jawaban.
+8. Prompt dikirim ke model untuk menghasilkan jawaban.
 9. Jawaban diproses untuk mengekstrak referensi dokumen yang direkomendasikan.
 10. UI menampilkan:
 	- Jawaban asisten
@@ -58,7 +47,7 @@ flowchart TD
 	L --> M[Top-K context docs]
 
 	M --> N[Build prompt final]
-	N --> O[Groq LLM generation]
+	N --> O[LLM generation]
 	O --> P[Ekstrak sumber yang direkomendasikan]
 	P --> Q[Tampilkan jawaban + source results]
 ```
@@ -92,7 +81,7 @@ Saat pertama kali dijalankan, aplikasi akan:
 2. Membentuk dokumen konteks dari field seperti nama, kategori, alamat, rating, review, jam buka, popular times, menu, telepon, dan koordinat
 3. Membuat embedding dengan `sentence-transformers`
 4. Menyusun index FAISS untuk retrieval
-5. Mengirim context hasil retrieval ke Groq untuk menjawab pertanyaan pengguna
+5. Mengirim context hasil retrieval ke LLM untuk menjawab pertanyaan pengguna
 
 ## Deploy ke Hugging Face Spaces
 
